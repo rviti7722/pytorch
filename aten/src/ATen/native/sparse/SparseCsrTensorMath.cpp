@@ -97,15 +97,15 @@ Tensor& addmm_out_sparse_csr_dense_cpu(
   TORCH_INTERNAL_ASSERT(sparse.is_sparse_csr());
   Tensor t = *expand_size(self, {sparse.size(0), dense.size(1)}, "addmm_out_sparse_csr");
 
-  TORCH_INTERNAL_ASSERT(t.device().type() == kCPU);
+  TORCH_INTERNAL_ASSERT(!t.is_cuda());
   TORCH_CHECK(
-      r.device().type() == kCPU,
+      !r.is_cuda(),
       "addmm: expected 'out' to be CPU tensor, but got CUDA tensor");
   TORCH_CHECK(
-      sparse.device().type() == kCPU,
+      !sparse.is_cuda(),
       "addmm: expected 'mat1' to be a CPU tensor, but got a CUDA tensor");
   TORCH_CHECK(
-      dense.device().type() == kCPU,
+      !dense.is_cuda(),
       "addmm: expected 'mat2' to be a CPU tensor, but got a CUDA tensor");
 
   TORCH_CHECK(
@@ -135,18 +135,16 @@ Tensor& addmm_out_sparse_csr_dense_cpu(
       dim_j,
       ", got ",
       dense.size(0));
-  TORCH_CHECK(
-      sparse.size(1) == dim_j,
-      "addmm: Expected sparse matrix (op1) size(1)=",
-      dim_j,
-      ", got ",
-      sparse.size(1));
+
   resize_output(r, {dim_i, dim_k});
   auto col_indices = sparse.col_indices();
   auto crow_indices = sparse.crow_indices();
   auto values = sparse.values();
   int64_t nnz        = sparse._nnz();
-
+  if (nnz == 0) {
+    at::mul_out(r, t, at::scalar_tensor(beta, r.options()));
+    return r;
+  }
   // Do not use MKL for Windows due to linking issues with sparse MKL routines.
   if (at::hasMKL() && is_mkl_supported() && is_square_or_vec(dim_i, dim_j, dim_k)) {
     AT_DISPATCH_FLOATING_TYPES(values.type(), "addmm_sparse_dense", [&] {
@@ -172,7 +170,7 @@ Tensor& addmm_out_sparse_csr_dense_cpu(
   return r;
 }
 
-Tensor addmm_sparse_csr_dense_cpu(
+Tensor addmm_sparse_csr_dense(
     const Tensor& self,
     const SparseCsrTensor& sparse,
     const Tensor& dense,
